@@ -1,1 +1,7 @@
 venv/
+__pycache__/
+*.pyc
+backend/retriever_index/
+backend/verification_experiment_results.json
+backend/build_fever_corpus.py
+backend/check_100k_coverage.py
