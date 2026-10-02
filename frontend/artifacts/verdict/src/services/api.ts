@@ -62,74 +62,120 @@ function isRecord(value: unknown): value is RecordValue {
 }
 
 function invalidResponse(): never {
-  throw new VerificationApiError('invalid-response', INVALID_RESPONSE_MESSAGE);
+  throw new VerificationApiError(
+    'invalid-response',
+    INVALID_RESPONSE_MESSAGE,
+  );
 }
 
 function requiredString(value: unknown): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     return invalidResponse();
   }
+
   return value;
 }
 
-function requiredFiniteNumber(value: unknown, min?: number, max?: number): number {
+function requiredFiniteNumber(
+  value: unknown,
+  min?: number,
+  max?: number,
+): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return invalidResponse();
   }
+
   if (min !== undefined && value < min) {
     return invalidResponse();
   }
+
   if (max !== undefined && value > max) {
     return invalidResponse();
   }
+
   return value;
 }
 
 function optionalString(value: unknown): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'string') return invalidResponse();
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== 'string') {
+    return invalidResponse();
+  }
+
   return value;
 }
 
 function safeUrl(value: unknown): string | undefined {
   const url = optionalString(value);
-  if (url === undefined) return undefined;
+
+  if (url === undefined) {
+    return undefined;
+  }
+
   try {
     const parsed = new URL(url);
+
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return invalidResponse();
     }
   } catch {
     return invalidResponse();
   }
+
   return url;
 }
 
 function normalizeVerdict(value: unknown): Verdict {
-  if (value === 'SUPPORTS') return 'SUPPORTED';
-  if (value === 'REFUTES') return 'REFUTED';
-  if (value === 'NOT ENOUGH INFO') return 'UNCERTAIN';
+  if (value === 'SUPPORTS') {
+    return 'SUPPORTED';
+  }
+
+  if (value === 'REFUTES') {
+    return 'REFUTED';
+  }
+
+  if (value === 'NOT ENOUGH INFO') {
+    return 'UNCERTAIN';
+  }
+
   return invalidResponse();
 }
 
 function normalizeEvidence(value: unknown): EvidenceItem[] {
-  if (!Array.isArray(value)) return invalidResponse();
+  if (!Array.isArray(value)) {
+    return invalidResponse();
+  }
 
   return value.map((item) => {
-    if (!isRecord(item)) return invalidResponse();
+    if (!isRecord(item)) {
+      return invalidResponse();
+    }
 
     const sentenceId = item.sentence_id;
+
     if (
       sentenceId !== undefined &&
-      (typeof sentenceId !== 'string' ||
-        sentenceId.trim().length === 0)
+      typeof sentenceId !== 'string' &&
+      typeof sentenceId !== 'number'
     ) {
-      if (
-        typeof sentenceId !== 'number' ||
-        !Number.isFinite(sentenceId)
-      ) {
-        return invalidResponse();
-      }
+      return invalidResponse();
+    }
+
+    if (
+      typeof sentenceId === 'string' &&
+      sentenceId.trim().length === 0
+    ) {
+      return invalidResponse();
+    }
+
+    if (
+      typeof sentenceId === 'number' &&
+      !Number.isFinite(sentenceId)
+    ) {
+      return invalidResponse();
     }
 
     const score =
@@ -150,25 +196,51 @@ function normalizeEvidence(value: unknown): EvidenceItem[] {
 }
 
 function normalizeDebate(value: unknown): Debate {
-  if (!isRecord(value)) return invalidResponse();
+  if (!isRecord(value)) {
+    return invalidResponse();
+  }
 
+  // Backend returns:
+  // "agents": 2
+  // "rounds": 3
   const agentCount = requiredFiniteNumber(value.agents, 1);
-  if (!Number.isInteger(agentCount)) return invalidResponse();
+
+  if (!Number.isInteger(agentCount)) {
+    return invalidResponse();
+  }
 
   const rounds = requiredFiniteNumber(value.rounds, 1);
-  if (!Number.isInteger(rounds)) return invalidResponse();
 
-  if (!isRecord(value.final_reasoning)) return invalidResponse();
+  if (!Number.isInteger(rounds)) {
+    return invalidResponse();
+  }
+
+  if (!isRecord(value.final_reasoning)) {
+    return invalidResponse();
+  }
+
   const reasoning = value.final_reasoning;
-  const round = requiredFiniteNumber(reasoning.round, 1);
-  if (!Number.isInteger(round)) return invalidResponse();
 
-  const agentNames = Array.from({ length: agentCount }, (_, index) =>
-    index === 0
-      ? 'Evidence analyst'
-      : index === 1
-        ? 'Skeptical reviewer'
-        : `Reviewer ${index + 1}`,
+  /*
+   * The backend does not return:
+   *
+   * "round": 3
+   *
+   * inside final_reasoning.
+   *
+   * Since final_reasoning represents the final debate state,
+   * use the backend's total round count.
+   */
+  const round = rounds;
+
+  const agentNames = Array.from(
+    { length: agentCount },
+    (_, index) =>
+      index === 0
+        ? 'Evidence analyst'
+        : index === 1
+          ? 'Skeptical reviewer'
+          : `Reviewer ${index + 1}`,
   );
 
   return {
@@ -183,7 +255,9 @@ function normalizeDebate(value: unknown): Debate {
 }
 
 function normalizeResult(raw: unknown): VerificationResult {
-  if (!isRecord(raw)) return invalidResponse();
+  if (!isRecord(raw)) {
+    return invalidResponse();
+  }
 
   return {
     claim: requiredString(raw.claim),
@@ -195,29 +269,44 @@ function normalizeResult(raw: unknown): VerificationResult {
   };
 }
 
-function mockVerification(claim: string): Promise<VerificationResult> {
+function mockVerification(
+  claim: string,
+): Promise<VerificationResult> {
   return new Promise((resolve) => {
     window.setTimeout(() => {
       const lower = claim.toLowerCase();
       const result = structuredClone(mockResult);
+
       result.claim = claim;
-      if (/\bnever\b|\bimpossible\b|\bflat earth\b|\bcauses\b/.test(lower)) {
+
+      if (
+        /\bnever\b|\bimpossible\b|\bflat earth\b|\bcauses\b/.test(
+          lower,
+        )
+      ) {
         result.verdict = 'REFUTED';
         result.confidence = 0.79;
         result.explanation =
           'The available evidence contradicts the claim as written. Some adjacent ideas may be true, but they do not support this absolute or causal wording.';
-      } else if (/\bmaybe\b|\baliens\b|\balways\b|\bguarantee\b/.test(lower)) {
+      } else if (
+        /\bmaybe\b|\baliens\b|\balways\b|\bguarantee\b/.test(
+          lower,
+        )
+      ) {
         result.verdict = 'UNCERTAIN';
         result.confidence = 0.48;
         result.explanation =
           'The claim cannot be settled confidently from the evidence available. Its wording is too broad, or the underlying question remains actively debated.';
       }
+
       resolve(result);
     }, 1450);
   });
 }
 
-function errorForStatus(status: number): VerificationApiError {
+function errorForStatus(
+  status: number,
+): VerificationApiError {
   if (status === 400) {
     return new VerificationApiError(
       'bad-request',
@@ -225,6 +314,7 @@ function errorForStatus(status: number): VerificationApiError {
       status,
     );
   }
+
   if (status === 422) {
     return new VerificationApiError(
       'unprocessable',
@@ -232,6 +322,7 @@ function errorForStatus(status: number): VerificationApiError {
       status,
     );
   }
+
   if (status >= 500) {
     return new VerificationApiError(
       'server',
@@ -239,6 +330,7 @@ function errorForStatus(status: number): VerificationApiError {
       status,
     );
   }
+
   return new VerificationApiError(
     'unknown',
     'The verification service could not complete the request. Please try again.',
@@ -246,16 +338,26 @@ function errorForStatus(status: number): VerificationApiError {
   );
 }
 
-export async function verifyClaim(claim: string): Promise<VerificationResult> {
-  if (isMockMode) return mockVerification(claim);
+export async function verifyClaim(
+  claim: string,
+): Promise<VerificationResult> {
+  if (isMockMode) {
+    return mockVerification(claim);
+  }
 
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 120000);
+
+  const timeout = window.setTimeout(
+    () => controller.abort(),
+    120000,
+  );
 
   try {
     const response = await fetch('/api/verify', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+      },
       credentials: 'include',
       body: JSON.stringify({ claim }),
       signal: controller.signal,
@@ -266,6 +368,7 @@ export async function verifyClaim(claim: string): Promise<VerificationResult> {
     }
 
     let payload: unknown;
+
     try {
       payload = await response.json();
     } catch {
@@ -274,21 +377,30 @@ export async function verifyClaim(claim: string): Promise<VerificationResult> {
         INVALID_RESPONSE_MESSAGE,
       );
     }
+
     return normalizeResult(payload);
   } catch (error) {
-    if (error instanceof VerificationApiError) throw error;
-    if (error instanceof DOMException && error.name === 'AbortError') {
+    if (error instanceof VerificationApiError) {
+      throw error;
+    }
+
+    if (
+      error instanceof DOMException &&
+      error.name === 'AbortError'
+    ) {
       throw new VerificationApiError(
         'timeout',
         'The request took too long. Check your connection and try again.',
       );
     }
+
     if (error instanceof TypeError) {
       throw new VerificationApiError(
         'network',
         'We could not reach the verification service. Check your connection and try again.',
       );
     }
+
     throw new VerificationApiError(
       'unknown',
       'Something went wrong while verifying this claim. Please try again.',
