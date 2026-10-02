@@ -1,266 +1,50 @@
-from datasets import load_dataset
+"""Compare TF-IDF, BM25 and SBERT+FAISS on the SAME corpus with the SAME tokenisation.
 
-from services.tfidf_retriever import TfidfRetriever
-from services.bm25_retriever import BM25Retriever
-from services.evidence_retriever import FeverEvidenceRetriever
-
-
-NUM_CLAIMS = 1000
-TOP_K_VALUES = [1, 3, 5]
+Usage: python compare_retrieval.py --num-claims 1000 [--include-title]
+Writes retrieval_comparison_results.json.
+"""
+import argparse
+import json
 
 
-def get_gold_ids(row):
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--num-claims", type=int, default=1000)
+    ap.add_argument("--max-claims", type=int, default=50000, help="FEVER train claims indexed")
+    ap.add_argument("--include-title", action="store_true")
+    ap.add_argument("--output", default="retrieval_comparison_results.json")
+    args = ap.parse_args()
 
-    gold_ids = set()
+    from datasets import load_dataset
+    from services.bm25_retriever import BM25Retriever
+    from services.corpus import load_fever_evidence
+    from services.evidence_retriever import FeverEvidenceRetriever
+    from services.retrieval_eval import evaluate_retriever
+    from services.tfidf_retriever import TfidfRetriever
 
-    for item in row["evidence"]:
+    claims = load_dataset("copenlu/fever_gold_evidence", split="validation") \
+        .select(range(args.num_claims))
+    evidence = load_fever_evidence(args.max_claims)     # loaded once, shared by all three
+    print(f"Corpus: {len(evidence)} unique evidence records")
 
-        if len(item) >= 2:
-
-            title = item[0]
-            sentence_id = item[1]
-
-            gold_ids.add(
-                (
-                    title,
-                    sentence_id
-                )
-            )
-
-    return gold_ids
-
-
-def evaluate_retriever(
-    name,
-    retriever,
-    claims
-):
-
-    print(
-        f"\nEvaluating {name}..."
-    )
-
-    covered_claims = 0
-
-    recall_counts = {
-        k: 0
-        for k in TOP_K_VALUES
+    retrievers = {
+        "TF-IDF + cosine": TfidfRetriever(evidence=evidence, include_title=args.include_title),
+        "BM25": BM25Retriever(evidence=evidence, include_title=args.include_title),
+        "Sentence-BERT + FAISS": FeverEvidenceRetriever(
+            max_claims=args.max_claims, include_title=args.include_title, evidence=evidence),
     }
+    results = {"config": vars(args), "corpus_size": len(evidence), "retrievers": {}}
+    for name, r in retrievers.items():
+        results["retrievers"][name] = evaluate_retriever(r, claims)
 
-    evaluated_claims = 0
-
-    corpus_ids = {
-        (
-            item["title"],
-            str(item["sentence_id"])
-        )
-        for item in retriever.evidence
-    }
-
-    for row_number, row in enumerate(
-        claims,
-        start=1
-    ):
-
-        gold_ids = get_gold_ids(row)
-
-        if not gold_ids:
-            continue
-
-        # Check whether at least one gold
-        # evidence record exists in our corpus.
-        if not gold_ids.intersection(
-            corpus_ids
-        ):
-            continue
-
-        covered_claims += 1
-
-        results = retriever.retrieve(
-            row["claim"],
-            top_k=max(TOP_K_VALUES)
-        )
-
-        retrieved_ids = [
-            (
-                item["title"],
-                str(item["sentence_id"])
-            )
-            for item in results
-        ]
-
-        evaluated_claims += 1
-
-        for k in TOP_K_VALUES:
-
-            top_k_ids = set(
-                retrieved_ids[:k]
-            )
-
-            if gold_ids.intersection(
-                top_k_ids
-            ):
-
-                recall_counts[k] += 1
-
-        if row_number % 20 == 0:
-
-            print(
-                f"Processed "
-                f"{row_number}/{len(claims)} claims"
-            )
-
-    print(
-        f"\n{name}"
-    )
-
-    print(
-        f"Gold-evidence-covered claims: "
-        f"{covered_claims}/{len(claims)}"
-    )
-
-    print(
-        f"Evaluated claims: "
-        f"{evaluated_claims}"
-    )
-
-    results = {
-        "algorithm": name,
-        "covered": covered_claims,
-        "evaluated": evaluated_claims
-    }
-
-    for k in TOP_K_VALUES:
-
-        if evaluated_claims == 0:
-
-            recall = 0
-
-        else:
-
-            recall = (
-                recall_counts[k]
-                / evaluated_claims
-                * 100
-            )
-
-        results[
-            f"recall@{k}"
-        ] = recall
-
-        print(
-            f"Recall@{k}: "
-            f"{recall:.2f}%"
-        )
-
-    return results
+    print(f"\n{'Algorithm':<24}{'n':>5}{'hit@1':>9}{'hit@3':>9}{'hit@5':>9}")
+    for name, m in results["retrievers"].items():
+        print(f"{name:<24}{m['claims_evaluated']:>5}" +
+              "".join(f"{m[f'hit@{k}']*100:>8.1f}%" for k in (1, 3, 5)))
+    with open(args.output, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2)
+    print(f"\nSaved to {args.output}")
 
 
-print(
-    "Loading FEVER validation set..."
-)
-
-dataset = load_dataset(
-    "copenlu/fever_gold_evidence"
-)
-
-claims = dataset["validation"].select(
-    range(NUM_CLAIMS)
-)
-
-print(
-    f"Using {len(claims)} validation claims."
-)
-
-
-print(
-    "\nInitializing TF-IDF..."
-)
-
-tfidf = TfidfRetriever(
-    max_evidence=50000
-)
-
-
-print(
-    "\nInitializing BM25..."
-)
-
-bm25 = BM25Retriever(
-    max_evidence=50000
-)
-
-
-print(
-    "\nInitializing Sentence-BERT + FAISS..."
-)
-
-sbert = FeverEvidenceRetriever(
-    max_evidence=50000
-)
-
-
-results = []
-
-
-results.append(
-    evaluate_retriever(
-        "TF-IDF + Cosine",
-        tfidf,
-        claims
-    )
-)
-
-
-results.append(
-    evaluate_retriever(
-        "BM25",
-        bm25,
-        claims
-    )
-)
-
-
-results.append(
-    evaluate_retriever(
-        "Sentence-BERT + FAISS",
-        sbert,
-        claims
-    )
-)
-
-
-print(
-    "\n" + "=" * 70
-)
-
-print(
-    "FINAL RETRIEVAL COMPARISON"
-)
-
-print(
-    "=" * 70
-)
-
-print(
-    f"{'Algorithm':<25}"
-    f"{'Coverage':<12}"
-    f"{'Recall@1':<12}"
-    f"{'Recall@3':<12}"
-    f"{'Recall@5':<12}"
-)
-
-print(
-    "-" * 70
-)
-
-
-for result in results:
-
-    print(
-        f"{result['algorithm']:<25}"
-        f"{result['covered']:<12}"
-        f"{result['recall@1']:<12.2f}"
-        f"{result['recall@3']:<12.2f}"
-        f"{result['recall@5']:<12.2f}"
-    )
+if __name__ == "__main__":
+    main()

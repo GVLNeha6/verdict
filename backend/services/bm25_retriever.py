@@ -1,104 +1,25 @@
-from datasets import load_dataset
+"""Lexical baseline: BM25 (Okapi) with the same tokenisation as TF-IDF."""
+from typing import Dict, List, Optional
+
+import numpy as np
 from rank_bm25 import BM25Okapi
+
+from services.corpus import index_text, load_fever_evidence, tokenize
 
 
 class BM25Retriever:
+    def __init__(self, max_claims: int = 50000, include_title: bool = False,
+                 evidence: Optional[List[Dict]] = None):
+        self.evidence = evidence if evidence is not None else load_fever_evidence(max_claims)
+        self.bm25 = BM25Okapi([tokenize(index_text(e, include_title)) for e in self.evidence])
 
-    def __init__(self, max_evidence=50000):
-
-        self.max_evidence = max_evidence
-
-        print("Loading FEVER dataset...")
-
-        dataset = load_dataset(
-            "copenlu/fever_gold_evidence"
-        )
-
-        data = dataset["train"].select(
-            range(
-                min(
-                    self.max_evidence,
-                    len(dataset["train"])
-                )
-            )
-        )
-
-        evidence_dict = {}
-
-        for row in data:
-
-            for item in row["evidence"]:
-
-                if len(item) < 3:
-                    continue
-
-                title = item[0]
-                sentence_id = item[1]
-                text = item[2]
-
-                key = (
-                    title,
-                    sentence_id,
-                    text
-                )
-
-                evidence_dict[key] = {
-                    "title": title,
-                    "sentence_id": sentence_id,
-                    "text": text
-                }
-
-        self.evidence = list(
-            evidence_dict.values()
-        )
-
-        print(
-            f"Unique evidence records: "
-            f"{len(self.evidence)}"
-        )
-
-        texts = [
-            item["text"]
-            for item in self.evidence
-        ]
-
-        print("Creating BM25 index...")
-
-        tokenized_texts = [
-            text.lower().split()
-            for text in texts
-        ]
-
-        self.bm25 = BM25Okapi(
-            tokenized_texts
-        )
-
-        print("BM25 index ready.")
-
-    def retrieve(self, claim, top_k=5):
-
-        tokenized_query = claim.lower().split()
-
-        scores = self.bm25.get_scores(
-            tokenized_query
-        )
-
-        top_indices = sorted(
-            range(len(scores)),
-            key=lambda i: scores[i],
-            reverse=True
-        )[:top_k]
-
+    def retrieve(self, claim: str, top_k: int = 5, min_score: float = 0.0) -> List[Dict]:
+        scores = np.asarray(self.bm25.get_scores(tokenize(claim)))
         results = []
-
-        for index in top_indices:
-
-            evidence = self.evidence[index].copy()
-
-            evidence["score"] = float(
-                scores[index]
-            )
-
-            results.append(evidence)
-
+        for idx in np.argsort(-scores, kind="stable")[:top_k]:
+            if scores[idx] <= 0 or scores[idx] < min_score:
+                continue
+            item = dict(self.evidence[idx])
+            item["score"] = float(scores[idx])
+            results.append(item)
         return results

@@ -1,129 +1,95 @@
-import openai
+"""Final judge. Also serves the no-debate baselines so that all experimental conditions
+share exactly the same decision prompt and differ only in (evidence, debate)."""
+import logging
+import re
+from typing import Dict, List, Optional
+
+from services.debate_service import format_evidence_items
+from services.llm_client import LLMClient
+from services.verdict_service import JudgeResult, parse_judge_response
+
+logger = logging.getLogger(__name__)
+
+_FORMAT = """Return your answer in exactly this format:
+
+VERDICT: <one of SUPPORTS, REFUTES, NOT ENOUGH INFO>
+CONFIDENCE: <number between 0 and 1>
+EXPLANATION: <short explanation>
+EVIDENCE_USED: <evidence numbers you relied on, e.g. 1, 3; write None if not applicable>"""
+
+_LABEL_DEFS = """Labels:
+- SUPPORTS: the claim is true.
+- REFUTES: the claim is false.
+- NOT ENOUGH INFO: the claim cannot be decided."""
+
+
+def _agent_keys(round_entry: Dict) -> List[str]:
+    keys = [k for k in round_entry if re.fullmatch(r"agent_\d+", k)]
+    return sorted(keys, key=lambda k: int(k.split("_")[1]))
 
 
 class JudgeService:
+    def __init__(self, llm: LLMClient, temperature: float = 0.0, parse_retries: int = 1):
+        self.llm = llm
+        self.temperature = temperature
+        self.parse_retries = parse_retries
 
-    def __init__(
-        self,
-        api_key,
-        model="gemini-3.5-flash-lite",
-        base_url="https://generativelanguage.googleapis.com/v1beta/openai"
-    ):
-        openai.api_key = api_key
-        openai.api_base = base_url
+    def build_prompt(self, claim: str, evidence: List[Dict],
+                     debate_history: Optional[List[Dict]], use_evidence: bool) -> str:
+        parts = ["You are the final judge in a claim verification system.",
+                 f"CLAIM:\n{claim}"]
 
-        self.model = model
+        if use_evidence:
+            parts.append("RETRIEVED EVIDENCE:\n" + format_evidence_items(evidence))
+            parts.append(
+                "Decide whether the claim is supported, refuted, or not decidable from "
+                "the evidence.\n" + _LABEL_DEFS + "\n"
+                "Rules:\n- Judge strictly against the supplied evidence.\n"
+                "- Do not use outside knowledge and do not invent evidence.\n"
+                "- Use NOT ENOUGH INFO when the evidence does not settle the claim.\n"
+                "- Cite the evidence numbers you used.")
+        else:
+            parts.append(
+                "No evidence is available. Decide using your own knowledge and reasoning.\n"
+                + _LABEL_DEFS + "\n"
+                "Rules:\n- Commit to SUPPORTS or REFUTES when you can determine the answer "
+                "from your knowledge.\n"
+                "- Use NOT ENOUGH INFO only if the claim genuinely cannot be determined.\n"
+                "- Write EVIDENCE_USED: None.")
 
-    def _ask(self, prompt):
-     import time
+        if debate_history:
+            final = debate_history[-1]
+            for key in _agent_keys(final):
+                n = key.split("_")[1]
+                parts.append(f"FINAL AGENT {n} REASONING:\n{final[key]}")
+            parts.append("Do not pick a verdict merely because the agents agree; "
+                         "check it against the rules above.")
 
-     max_retries = 5
+        parts.append(_FORMAT)
+        return "\n\n".join(parts)
 
-     for attempt in range(max_retries):
-        try:
-            response = openai.ChatCompletion.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0
-            )
+    def judge(self, claim: str, evidence: Optional[List[Dict]] = None,
+              debate_history: Optional[List[Dict]] = None,
+              use_evidence: bool = True) -> JudgeResult:
+        evidence = evidence or []
 
-            return response["choices"][0]["message"]["content"]
+        if use_evidence and not evidence:
+            # Nothing was retrieved: deterministic NEI, no LLM call, cannot hallucinate.
+            return JudgeResult(verdict="NOT ENOUGH INFO", confidence=1.0,
+                               explanation="No evidence was retrieved for this claim.",
+                               grounded=True, parse_ok=True, raw="")
 
-        except openai.error.APIError as e:
-            error_text = str(e)
+        prompt = self.build_prompt(claim, evidence, debate_history, use_evidence)
+        n_evidence = len(evidence) if use_evidence else 0
 
-            if "429" in error_text or "quota" in error_text.lower():
-                if attempt == max_retries - 1:
-                    raise
+        result = None
+        for attempt in range(1 + self.parse_retries):
+            raw = self.llm.ask(prompt, temperature=self.temperature)
+            result = parse_judge_response(raw, n_evidence)
+            if result.parse_ok:
+                break
+            logger.warning("Judge output unparseable (attempt %d): %r", attempt + 1, raw[:200])
 
-                wait_time = 20
-                print(
-                    f"Gemini rate limit reached. "
-                    f"Waiting {wait_time} seconds before retry "
-                    f"({attempt + 1}/{max_retries})..."
-                )
-                time.sleep(wait_time)
-
-            else:
-                raise
-
-        except openai.error.ServiceUnavailableError:
-            if attempt == max_retries - 1:
-                raise
-
-            wait_time = 10
-            print(
-                f"Gemini server unavailable. "
-                f"Waiting {wait_time} seconds before retry..."
-            )
-            time.sleep(wait_time)
-
-    def judge(
-        self,
-        claim,
-        evidence,
-        debate_history
-    ):
-
-        evidence_text = "\n\n".join(
-            [
-                (
-                    f"Evidence {i + 1}:\n"
-                    f"Title: {item['title']}\n"
-                    f"Text: {item['text']}"
-                )
-                for i, item in enumerate(evidence)
-            ]
-        )
-
-        final_debate = debate_history[-1]
-
-        prompt = f"""
-You are the final Judge in an evidence-based claim verification system.
-
-Your task is to determine whether the claim is supported, refuted,
-or not sufficiently supported by the provided evidence.
-
-CLAIM:
-{claim}
-
-RETRIEVED EVIDENCE:
-{evidence_text}
-
-FINAL AGENT 1 REASONING:
-{final_debate["agent_1"]}
-
-FINAL AGENT 2 REASONING:
-{final_debate["agent_2"]}
-
-Evaluate the claim strictly against the supplied evidence.
-
-Use exactly one of these verdict labels:
-
-SUPPORTS
-REFUTES
-NOT ENOUGH INFO
-
-Rules:
-
-- SUPPORTS: The evidence directly supports the claim.
-- REFUTES: The evidence directly contradicts the claim.
-- NOT ENOUGH INFO: The evidence does not provide enough information
-  to determine whether the claim is true or false.
-- Do not use outside knowledge.
-- Do not invent evidence.
-- Do not choose a verdict simply because both agents agree.
-- Base the decision on the actual evidence.
-
-Return your answer in exactly this format:
-
-VERDICT: <SUPPORTS / REFUTES / NOT ENOUGH INFO>
-
-CONFIDENCE: <number between 0 and 1>
-
-EXPLANATION: <short explanation based only on the evidence>
-
-EVIDENCE_USED: <list the evidence numbers used, for example Evidence 1, Evidence 3>
-"""
-
-        return self._ask(prompt)
+        if not use_evidence:
+            result.grounded = result.parse_ok   # grounding is not applicable without evidence
+        return result

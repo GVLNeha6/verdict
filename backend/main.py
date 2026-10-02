@@ -1,206 +1,69 @@
-import os
-import re
+"""Verdict API."""
+import logging
+import secrets
+from contextlib import asynccontextmanager
+from typing import Callable, Optional
 
-from fastapi import FastAPI, HTTPException
-from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 
 from models.schemas import VerifyRequest, VerifyResponse
-from services.evidence_retriever import FeverEvidenceRetriever
-from services.debate_service import DebateService
-from services.judge_service import JudgeService
+from services.llm_client import LLMError
+from services.pipeline import JudgeParseError, build_pipeline
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger("verdict.api")
 
 
-load_dotenv()
+def create_app(pipeline_factory: Optional[Callable] = None, api_key: Optional[str] = None) -> FastAPI:
+    """`pipeline_factory` returns a VerificationPipeline (injectable for tests)."""
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if pipeline_factory is not None:
+            app.state.pipeline = pipeline_factory()
+        else:
+            from config import load_settings
+            settings = load_settings()
+            app.state.api_key = settings.api_key
+            app.state.pipeline = build_pipeline(settings)
+        yield
+
+    app = FastAPI(title="Verdict API",
+                  description="Evidence-Based AI Claim Verification Platform",
+                  version="1.1.0", lifespan=lifespan)
+    app.state.api_key = api_key
+
+    def require_key(request: Request, x_api_key: Optional[str] = Header(default=None)):
+        expected = getattr(request.app.state, "api_key", None)
+        if expected and not (x_api_key and secrets.compare_digest(x_api_key, expected)):
+            raise HTTPException(status_code=401, detail="Invalid or missing API key.")
+
+    @app.get("/")
+    def root():
+        return {"message": "Verdict API is running"}
+
+    @app.get("/health")
+    def health(request: Request):
+        return {"status": "ok" if getattr(request.app.state, "pipeline", None) else "starting"}
+
+    @app.post("/api/verify", response_model=VerifyResponse, dependencies=[Depends(require_key)])
+    def verify_claim(body: VerifyRequest, request: Request):
+        claim = body.claim.strip()
+        if not claim:
+            raise HTTPException(status_code=422, detail="Claim cannot be empty.")
+        try:
+            return request.app.state.pipeline.verify(claim)
+        except LLMError as exc:
+            logger.error("LLM failure: %s", exc)
+            raise HTTPException(status_code=502, detail="Upstream language model unavailable.")
+        except JudgeParseError as exc:
+            logger.error("Judge parse failure: %s", exc)
+            raise HTTPException(status_code=502, detail="Judge returned an invalid response.")
+        except Exception:
+            logger.exception("Unhandled error while verifying claim")
+            raise HTTPException(status_code=500, detail="Internal server error.")
+
+    return app
 
 
-app = FastAPI(
-    title="Verdict API",
-    description="Evidence-Based AI Claim Verification Platform",
-    version="1.0.0"
-)
-
-
-# --------------------------------------------------
-# Initialize services
-# --------------------------------------------------
-
-retriever = FeverEvidenceRetriever(
-    max_evidence=50000
-)
-
-api_key = os.getenv("GEMINI_API_KEY")
-
-if not api_key:
-    raise RuntimeError(
-        "GEMINI_API_KEY environment variable is not set."
-    )
-
-
-debate_service = DebateService(
-    api_key=api_key
-)
-
-judge_service = JudgeService(
-    api_key=api_key
-)
-
-
-# --------------------------------------------------
-# Helper functions
-# --------------------------------------------------
-
-def extract_verdict(text):
-    """
-    Extract SUPPORTS, REFUTES, or NOT ENOUGH INFO
-    from the judge response.
-    """
-
-    match = re.search(
-        r"VERDICT:\s*(SUPPORTS|REFUTES|NOT ENOUGH INFO)",
-        text.upper()
-    )
-
-    if match:
-        return match.group(1)
-
-    return "NOT ENOUGH INFO"
-
-
-def extract_confidence(text):
-    """
-    Extract confidence value from the judge response.
-    """
-
-    match = re.search(
-        r"CONFIDENCE:\s*(0(?:\.\d+)?|1(?:\.0+)?)",
-        text.upper()
-    )
-
-    if match:
-        return float(match.group(1))
-
-    return 0.0
-
-
-def extract_explanation(text):
-    """
-    Extract explanation from the judge response.
-    """
-
-    match = re.search(
-        r"EXPLANATION:\s*(.*?)(?:\nEVIDENCE_USED:|\Z)",
-        text,
-        re.IGNORECASE | re.DOTALL
-    )
-
-    if match:
-        return match.group(1).strip()
-
-    return text.strip()
-
-
-# --------------------------------------------------
-# Basic endpoints
-# --------------------------------------------------
-
-@app.get("/")
-def root():
-    return {
-        "message": "Verdict API is running"
-    }
-
-
-@app.get("/health")
-def health():
-    return {
-        "status": "ok"
-    }
-
-
-# --------------------------------------------------
-# Claim verification endpoint
-# --------------------------------------------------
-
-@app.post(
-    "/api/verify",
-    response_model=VerifyResponse
-)
-def verify_claim(request: VerifyRequest):
-
-    claim = request.claim.strip()
-
-    if not claim:
-        raise HTTPException(
-            status_code=400,
-            detail="Claim cannot be empty."
-        )
-
-    # --------------------------------------------------
-    # 1. Retrieve evidence
-    # --------------------------------------------------
-
-    evidence = retriever.retrieve(
-        claim,
-        top_k=5
-    )
-
-    # --------------------------------------------------
-    # 2. Run multi-agent debate
-    # --------------------------------------------------
-
-    debate_history = debate_service.run_debate(
-        claim=claim,
-        evidence=evidence,
-        rounds=3
-    )
-
-    # --------------------------------------------------
-    # 3. Judge the debate
-    # --------------------------------------------------
-
-    judge_result = judge_service.judge(
-        claim=claim,
-        evidence=evidence,
-        debate_history=debate_history
-    )
-
-    # JudgeService currently returns a plain string
-    raw_text = str(judge_result)
-
-    # --------------------------------------------------
-    # 4. Extract judge results
-    # --------------------------------------------------
-
-    verdict = extract_verdict(
-        raw_text
-    )
-
-    confidence = extract_confidence(
-        raw_text
-    )
-
-    explanation = extract_explanation(
-        raw_text
-    )
-
-    # --------------------------------------------------
-    # 5. Return final API response
-    # --------------------------------------------------
-
-    return {
-        "claim": claim,
-
-        "verdict": verdict,
-
-        "confidence": confidence,
-
-        "explanation": explanation,
-
-        "evidence": evidence,
-
-        "debate": {
-            "agents": 2,
-            "rounds": 3,
-            "final_reasoning": debate_history[-1]
-        }
-    }
+app = create_app()

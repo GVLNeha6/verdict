@@ -1,202 +1,94 @@
+"""Dense retriever: Sentence-BERT embeddings + exact cosine search with FAISS."""
+import json
+import logging
 from pathlib import Path
+from typing import Dict, List, Optional
 
 import faiss
 import numpy as np
-from datasets import load_dataset
 from sentence_transformers import SentenceTransformer
+
+from services.corpus import corpus_fingerprint, index_text, load_fever_evidence
+
+logger = logging.getLogger(__name__)
+
+MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+DEFAULT_INDEX_DIR = Path(__file__).resolve().parent.parent / "retriever_index"
 
 
 class FeverEvidenceRetriever:
+    def __init__(self, max_claims: int = 50000, include_title: bool = False,
+                 evidence: Optional[List[Dict]] = None, index_dir: Optional[Path] = None,
+                 model_name: str = MODEL_NAME):
+        self.max_claims = max_claims
+        self.include_title = include_title
+        self.model_name = model_name
+        self.index_dir = Path(index_dir) if index_dir else DEFAULT_INDEX_DIR
+        self.index_dir.mkdir(parents=True, exist_ok=True)
+        self.index_path = self.index_dir / "fever.index"
+        self.evidence_path = self.index_dir / "evidence.json"
+        self.meta_path = self.index_dir / "meta.json"
 
-    def __init__(self, max_evidence=50000):
+        logger.info("Loading embedding model %s", model_name)
+        self.model = SentenceTransformer(model_name)
 
-        self.max_evidence = max_evidence
+        wanted = {"model": model_name, "max_claims": max_claims, "include_title": include_title}
+        meta = self._read_meta()
+        cache_matches = meta is not None and all(meta.get(k) == v for k, v in wanted.items())
 
-        self.index_dir = (
-            Path(__file__).resolve().parent.parent
-            / "retriever_index"
-        )
+        if evidence is None and cache_matches and self.index_path.exists() \
+                and self.evidence_path.exists():
+            self.evidence = json.loads(self.evidence_path.read_text(encoding="utf-8"))
+            self.index = faiss.read_index(str(self.index_path))
+            logger.info("Loaded cached index with %d records", len(self.evidence))
+            return
 
-        self.index_dir.mkdir(
-            parents=True,
-            exist_ok=True
-        )
-
-        self.index_path = (
-            self.index_dir / "fever.index"
-        )
-
-        self.metadata_path = (
-            self.index_dir / "evidence.npy"
-        )
-
-        print("Loading embedding model...")
-
-        self.model = SentenceTransformer(
-            "sentence-transformers/all-MiniLM-L6-v2"
-        )
-
-        if (
-            self.index_path.exists()
-            and self.metadata_path.exists()
-        ):
-
-            print("Loading existing FEVER index...")
-
-            self.index = faiss.read_index(
-                str(self.index_path)
-            )
-
-            self.evidence = np.load(
-                self.metadata_path,
-                allow_pickle=True
-            ).tolist()
-
-            print(
-                f"Loaded {len(self.evidence)} "
-                f"evidence records."
-            )
-
+        self.evidence = evidence if evidence is not None else load_fever_evidence(max_claims)
+        fingerprint = corpus_fingerprint(self.evidence)
+        if cache_matches and meta.get("corpus_sha1") == fingerprint and self.index_path.exists():
+            self.index = faiss.read_index(str(self.index_path))
+            logger.info("Reused cached index for identical corpus")
         else:
-
-            print("No saved index found.")
-            print("Building FEVER evidence index...")
-
             self._build_index()
+            self._save(wanted, fingerprint)
 
-    def _build_index(self):
+    # ----------------------------------------------------------------- caching
+    def _read_meta(self) -> Optional[Dict]:
+        if not self.meta_path.exists():
+            return None
+        try:
+            return json.loads(self.meta_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
 
-        print("Loading FEVER dataset...")
+    def _save(self, wanted: Dict, fingerprint: str) -> None:
+        faiss.write_index(self.index, str(self.index_path))
+        self.evidence_path.write_text(json.dumps(self.evidence, ensure_ascii=False),
+                                      encoding="utf-8")
+        self.meta_path.write_text(json.dumps(
+            {**wanted, "n_records": len(self.evidence), "corpus_sha1": fingerprint}),
+            encoding="utf-8")
 
-        dataset = load_dataset(
-            "copenlu/fever_gold_evidence"
-        )
+    def _build_index(self) -> None:
+        texts = [index_text(e, self.include_title) for e in self.evidence]
+        logger.info("Embedding %d evidence records", len(texts))
+        embeddings = self.model.encode(texts, convert_to_numpy=True,
+                                       show_progress_bar=True).astype("float32")
+        faiss.normalize_L2(embeddings)          # inner product == cosine similarity
+        self.index = faiss.IndexFlatIP(embeddings.shape[1])
+        self.index.add(embeddings)
 
-        data = dataset["train"].select(
-            range(
-                min(
-                    self.max_evidence,
-                    len(dataset["train"])
-                )
-            )
-        )
-
-        evidence_dict = {}
-
-        for row in data:
-
-            for item in row["evidence"]:
-
-                if len(item) < 3:
-                    continue
-
-                title = item[0]
-                sentence_id = item[1]
-                text = item[2]
-
-                key = (
-                    title,
-                    sentence_id,
-                    text
-                )
-
-                evidence_dict[key] = {
-                    "title": title,
-                    "sentence_id": sentence_id,
-                    "text": text
-                }
-
-        self.evidence = list(
-            evidence_dict.values()
-        )
-
-        print(
-            f"Unique evidence records: "
-            f"{len(self.evidence)}"
-        )
-
-        texts = [
-            item["text"]
-            for item in self.evidence
-        ]
-
-        print("Creating embeddings...")
-
-        embeddings = self.model.encode(
-            texts,
-            convert_to_numpy=True,
-            show_progress_bar=True
-        ).astype("float32")
-
-        faiss.normalize_L2(
-            embeddings
-        )
-
-        print("Creating FAISS index...")
-
-        self.index = faiss.IndexFlatIP(
-            embeddings.shape[1]
-        )
-
-        self.index.add(
-            embeddings
-        )
-
-        print("Saving FAISS index...")
-
-        faiss.write_index(
-            self.index,
-            str(self.index_path)
-        )
-
-        np.save(
-            self.metadata_path,
-            np.array(
-                self.evidence,
-                dtype=object
-            )
-        )
-
-        print("FEVER evidence index saved.")
-
-    def retrieve(
-        self,
-        claim,
-        top_k=5
-    ):
-
-        query_embedding = self.model.encode(
-            [claim],
-            convert_to_numpy=True
-        ).astype("float32")
-
-        faiss.normalize_L2(
-            query_embedding
-        )
-
-        scores, indices = self.index.search(
-            query_embedding,
-            top_k
-        )
+    # --------------------------------------------------------------- retrieval
+    def retrieve(self, claim: str, top_k: int = 5, min_score: float = 0.0) -> List[Dict]:
+        query = self.model.encode([claim], convert_to_numpy=True).astype("float32")
+        faiss.normalize_L2(query)
+        scores, indices = self.index.search(query, top_k)
 
         results = []
-
-        for score, index in zip(
-            scores[0],
-            indices[0]
-        ):
-
-            if index < 0:
+        for score, idx in zip(scores[0], indices[0]):
+            if idx < 0 or float(score) < min_score:
                 continue
-
-            evidence = (
-                self.evidence[index].copy()
-            )
-
-            evidence["score"] = float(
-                score
-            )
-
-            results.append(evidence)
-
+            item = dict(self.evidence[idx])
+            item["score"] = float(score)
+            results.append(item)
         return results

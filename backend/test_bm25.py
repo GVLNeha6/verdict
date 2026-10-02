@@ -1,4 +1,4 @@
-from services.bm25_retriever import BM25Retriever
+'''from services.bm25_retriever import BM25Retriever
 
 
 retriever = BM25Retriever(
@@ -26,3 +26,4 @@ for i, result in enumerate(results, start=1):
     print(f"Title: {result['title']}")
     print(f"Sentence ID: {result['sentence_id']}")
     print(f"Text: {result['text']}")
+    '''

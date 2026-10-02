@@ -1,239 +1,104 @@
-import time
+"""Multi-agent debate (Du et al., 2023) with optional retrieved evidence.
 
-import openai
+Mechanism
+  * Every agent keeps its own private message history.
+  * Round 1: each agent answers independently.
+  * Round r > 1: each agent is shown the *previous round's* answer of every OTHER agent,
+    then answers again. Its own history keeps growing (user prompt, assistant answer, ...).
+  * The previous-round answers are snapshotted before any agent speaks in the current round,
+    so the update is simultaneous: an agent can never see a same-round answer.
+"""
+import logging
+from typing import Dict, List, Optional
+
+from services.llm_client import LLMClient
+
+logger = logging.getLogger(__name__)
+
+_VERDICT_HINT = ("End with a line of the form 'CURRENT VERDICT: SUPPORTS', "
+                 "'CURRENT VERDICT: REFUTES' or 'CURRENT VERDICT: NOT ENOUGH INFO'.")
+
+
+def format_evidence_items(evidence: List[Dict]) -> str:
+    return "\n\n".join(
+        f"Evidence {i + 1}:\nTitle: {e['title']}\nText: {e['text']}"
+        for i, e in enumerate(evidence)
+    )
+
+
+def format_evidence(evidence: Optional[List[Dict]]) -> str:
+    if not evidence:
+        return ""
+    return "\n\nRetrieved evidence:\n" + format_evidence_items(evidence)
 
 
 class DebateService:
-
-    def __init__(
-        self,
-        api_key,
-        model="gemini-3.5-flash-lite",
-        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
-        agents=2
-    ):
-        openai.api_key = api_key
-        openai.api_base = base_url
-
-        self.model = model
+    def __init__(self, llm: LLMClient, agents: int = 2, temperature: float = 0.7):
+        if agents < 2:
+            raise ValueError("A debate needs at least 2 agents.")
+        self.llm = llm
         self.agents = agents
+        self.temperature = temperature
 
-    def _ask(self, messages):
-
-        if isinstance(messages, str):
-            messages = [
-                {
-                    "role": "user",
-                    "content": messages
-                }
-            ]
-
-        max_retries = 5
-
-        for attempt in range(max_retries):
-
-            try:
-
-                response = openai.ChatCompletion.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=0,
-                    request_timeout=90
-                )
-
-                return response["choices"][0]["message"]["content"]
-
-            except openai.error.Timeout:
-
-                if attempt == max_retries - 1:
-                    raise
-
-                wait_time = 20
-
-                print(
-                    f"Request timed out. "
-                    f"Waiting {wait_time} seconds before retry "
-                    f"({attempt + 1}/{max_retries})..."
-                )
-
-                time.sleep(wait_time)
-
-            except openai.error.APIError as e:
-
-                error_text = str(e)
-
-                if (
-                    "429" in error_text
-                    or "quota" in error_text.lower()
-                ):
-
-                    if attempt == max_retries - 1:
-                        raise
-
-                    wait_time = 20
-
-                    print(
-                        f"Gemini rate limit reached. "
-                        f"Waiting {wait_time} seconds before retry "
-                        f"({attempt + 1}/{max_retries})..."
-                    )
-
-                    time.sleep(wait_time)
-
-                else:
-                    raise
-
-            except openai.error.ServiceUnavailableError:
-
-                if attempt == max_retries - 1:
-                    raise
-
-                wait_time = 10
-
-                print(
-                    f"Gemini server unavailable. "
-                    f"Waiting {wait_time} seconds before retry..."
-                )
-
-                time.sleep(wait_time)
-
-    def _format_evidence(self, evidence):
-
-        if not evidence:
-            return ""
-
-        evidence_text = "\n\n".join(
-            [
-                (
-                    f"Evidence {i + 1}:\n"
-                    f"Title: {item['title']}\n"
-                    f"Text: {item['text']}"
-                )
-                for i, item in enumerate(evidence)
-            ]
-        )
-
+    # ------------------------------------------------------------------ prompts
+    def _initial_prompt(self, claim: str, evidence_text: str) -> str:
+        if evidence_text:
+            guidance = ("Base your analysis on the retrieved evidence. If it does not "
+                        "settle the claim, say so.")
+        else:
+            guidance = "Use your own knowledge and reasoning."
         return (
-            "\n\nRetrieved evidence:\n"
-            + evidence_text
+            "You are an independent agent in a multi-agent fact-checking debate.\n\n"
+            f"Claim:\n{claim}\n{evidence_text}\n\n"
+            f"Analyse the claim independently. {guidance}\n"
+            f"Give your reasoning. {_VERDICT_HINT}"
         )
 
-    def run_debate(
-        self,
-        claim,
-        evidence=None,
-        rounds=3
-    ):
+    def _debate_prompt(self, claim: str, evidence_text: str, round_number: int,
+                       others: List[str]) -> str:
+        return (
+            f"This is round {round_number} of the debate.\n\n"
+            f"Claim:\n{claim}\n{evidence_text}\n\n"
+            "Previous-round responses from the other agents:\n"
+            + "".join(others)
+            + "\nUse them as additional information. Critically examine their reasoning "
+              "and revise your answer if warranted.\n"
+              f"Give your updated reasoning. {_VERDICT_HINT}"
+        )
 
-        evidence_text = self._format_evidence(evidence)
+    # ------------------------------------------------------------------- debate
+    def run_debate(self, claim: str, evidence: Optional[List[Dict]] = None,
+                   rounds: int = 3) -> List[Dict]:
+        if rounds < 1:
+            raise ValueError("rounds must be >= 1")
+        evidence_text = format_evidence(evidence)
 
-        # Each agent has its own independent conversation context.
-        agent_contexts = []
+        contexts = [
+            [{"role": "user", "content": self._initial_prompt(claim, evidence_text)}]
+            for _ in range(self.agents)
+        ]
+        history = []
 
-        for _ in range(self.agents):
-
-            initial_prompt = f"""
-You are participating as an independent agent
-in a multi-agent reasoning process.
-
-Claim:
-{claim}
-{evidence_text}
-
-Analyze the claim independently.
-
-Provide your answer and reasoning.
-"""
-
-            agent_contexts.append(
-                [
-                    {
-                        "role": "user",
-                        "content": initial_prompt
-                    }
-                ]
-            )
-
-        debate_history = []
-
-        # Round 1: independent answers.
-        # Later rounds: each agent sees the previous
-        # round's answer from the other agents.
-        for round_number in range(rounds):
-
+        for round_index in range(rounds):
+            # Snapshot of every agent's latest answer BEFORE this round starts.
+            previous = ([ctx[-1]["content"] for ctx in contexts]
+                        if round_index > 0 else None)
             round_results = {}
 
-            for agent_index in range(self.agents):
+            for i, ctx in enumerate(contexts):
+                if previous is not None:
+                    others = [
+                        f"\nAgent {j + 1}'s previous response:\n\n{previous[j]}\n"
+                        for j in range(self.agents) if j != i
+                    ]
+                    ctx.append({"role": "user", "content": self._debate_prompt(
+                        claim, evidence_text, round_index + 1, others)})
 
-                context = agent_contexts[agent_index]
+                answer = self.llm.chat(ctx, temperature=self.temperature)
+                ctx.append({"role": "assistant", "content": answer})
+                round_results[f"agent_{i + 1}"] = answer
 
-                if round_number > 0:
+            history.append({"round": round_index + 1, **round_results})
+            logger.debug("debate round %d finished", round_index + 1)
 
-                    other_responses = []
-
-                    for other_index in range(self.agents):
-
-                        if other_index == agent_index:
-                            continue
-
-                        previous_response = agent_contexts[
-                            other_index
-                        ][-1]["content"]
-
-                        other_responses.append(
-                            f"""
-Agent {other_index + 1}'s previous response:
-
-{previous_response}
-"""
-                        )
-
-                    debate_prompt = f"""
-This is round {round_number + 1}
-of the multi-agent reasoning process.
-
-Claim:
-{claim}
-{evidence_text}
-
-The following are the previous responses
-from the other agents:
-
-{"".join(other_responses)}
-
-Use these responses as additional information.
-
-Critically examine their reasoning.
-If necessary, revise your answer.
-
-Provide your updated answer and reasoning.
-"""
-
-                    context.append(
-                        {
-                            "role": "user",
-                            "content": debate_prompt
-                        }
-                    )
-
-                response = self._ask(context)
-
-                context.append(
-                    {
-                        "role": "assistant",
-                        "content": response
-                    }
-                )
-
-                round_results[
-                    f"agent_{agent_index + 1}"
-                ] = response
-
-            debate_history.append(
-                {
-                    "round": round_number + 1,
-                    **round_results
-                }
-            )
-
-        return debate_history
+        return history

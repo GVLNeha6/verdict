@@ -1,4 +1,4 @@
-from services.tfidf_retriever import TfidfRetriever
+'''from services.tfidf_retriever import TfidfRetriever
 
 
 retriever = TfidfRetriever(
@@ -26,3 +26,4 @@ for i, result in enumerate(results, start=1):
     print(f"Title: {result['title']}")
     print(f"Sentence ID: {result['sentence_id']}")
     print(f"Text: {result['text']}")
+    '''

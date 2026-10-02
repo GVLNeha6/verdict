@@ -1,109 +1,29 @@
-from pathlib import Path
+"""Lexical baseline: TF-IDF + cosine similarity (same tokenisation as BM25)."""
+from typing import Dict, List, Optional
 
 import numpy as np
-from datasets import load_dataset
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+from services.corpus import index_text, load_fever_evidence, tokenize
+
 
 class TfidfRetriever:
+    def __init__(self, max_claims: int = 50000, include_title: bool = False,
+                 evidence: Optional[List[Dict]] = None):
+        self.evidence = evidence if evidence is not None else load_fever_evidence(max_claims)
+        texts = [index_text(e, include_title) for e in self.evidence]
+        self.vectorizer = TfidfVectorizer(tokenizer=tokenize, lowercase=False,
+                                          token_pattern=None)
+        self.matrix = self.vectorizer.fit_transform(texts)
 
-    def __init__(self, max_evidence=50000):
-
-        self.max_evidence = max_evidence
-
-        print("Loading FEVER dataset...")
-
-        dataset = load_dataset(
-            "copenlu/fever_gold_evidence"
-        )
-
-        data = dataset["train"].select(
-            range(
-                min(
-                    self.max_evidence,
-                    len(dataset["train"])
-                )
-            )
-        )
-
-        evidence_dict = {}
-
-        for row in data:
-
-            for item in row["evidence"]:
-
-                if len(item) < 3:
-                    continue
-
-                title = item[0]
-                sentence_id = item[1]
-                text = item[2]
-
-                key = (
-                    title,
-                    sentence_id,
-                    text
-                )
-
-                evidence_dict[key] = {
-                    "title": title,
-                    "sentence_id": sentence_id,
-                    "text": text
-                }
-
-        self.evidence = list(
-            evidence_dict.values()
-        )
-
-        print(
-            f"Unique evidence records: "
-            f"{len(self.evidence)}"
-        )
-
-        texts = [
-            item["text"]
-            for item in self.evidence
-        ]
-
-        print("Creating TF-IDF index...")
-
-        self.vectorizer = TfidfVectorizer(
-            lowercase=True,
-            stop_words="english"
-        )
-
-        self.matrix = self.vectorizer.fit_transform(
-            texts
-        )
-
-        print("TF-IDF index ready.")
-
-    def retrieve(self, claim, top_k=5):
-
-        query_vector = self.vectorizer.transform(
-            [claim]
-        )
-
-        scores = cosine_similarity(
-            query_vector,
-            self.matrix
-        )[0]
-
-        top_indices = np.argsort(
-            scores
-        )[::-1][:top_k]
-
+    def retrieve(self, claim: str, top_k: int = 5, min_score: float = 0.0) -> List[Dict]:
+        scores = cosine_similarity(self.vectorizer.transform([claim]), self.matrix)[0]
         results = []
-
-        for index in top_indices:
-
-            evidence = self.evidence[index].copy()
-
-            evidence["score"] = float(
-                scores[index]
-            )
-
-            results.append(evidence)
-
+        for idx in np.argsort(-scores, kind="stable")[:top_k]:
+            if scores[idx] <= 0 or scores[idx] < min_score:
+                continue
+            item = dict(self.evidence[idx])
+            item["score"] = float(scores[idx])
+            results.append(item)
         return results
