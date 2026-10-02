@@ -1,0 +1,629 @@
+STOP ALL IMPLEMENTATION.
+
+DO NOT MODIFY, REWRITE, DELETE, REFACTOR, OR CREATE ANY FILES.
+
+I want an EXACT CODE AUDIT of the frontend that currently exists in this Replit workspace.
+
+This is NOT a request to build a new frontend.
+
+This is NOT a request to create an artifact.
+
+This is NOT a request to improve the design yet.
+
+I want you to inspect the ACTUAL CURRENT CODE and give me a brutally honest engineering assessment.
+
+============================================================
+PROJECT
+============================================================
+
+Project: VERDICT
+
+Purpose:
+Evidence-Based AI Claim Verification Platform.
+
+The frontend flow is:
+
+User enters claim
+→ Verify Claim
+→ Loading
+→ Evidence retrieval
+→ Multi-agent reasoning
+→ Verdict
+→ Explanation
+→ Evidence
+→ Optional AI Debate details
+
+The existing backend contract is:
+
+POST /api/verify
+
+Request:
+
+{
+  "claim": "..."
+}
+
+Current backend response:
+
+{
+  "claim": "...",
+  "verdict": "SUPPORTS | REFUTES | NOT ENOUGH INFO",
+  "confidence": 0.98,
+  "explanation": "...",
+  "evidence": [
+    {
+      "title": "...",
+      "sentence_id": "12",
+      "text": "...",
+      "score": 0.8523
+    }
+  ],
+  "debate": {
+    "agents": 2,
+    "rounds": 3,
+    "final_reasoning": {
+      "round": 3,
+      "agent_1": "...",
+      "agent_2": "..."
+    }
+  }
+}
+
+Frontend verdict representation should be:
+
+SUPPORTS → SUPPORTED
+REFUTES → REFUTED
+NOT ENOUGH INFO → UNCERTAIN
+
+Backend currently does NOT provide:
+
+source
+url
+
+Therefore the frontend must NOT invent those values.
+
+Backend retrieval `score` is NOT verdict confidence.
+
+============================================================
+YOUR TASK
+============================================================
+
+AUDIT ONLY.
+
+Do not change anything.
+
+Inspect the COMPLETE frontend source tree.
+
+Do not rely on screenshots alone.
+
+Read the actual source code.
+
+Inspect:
+
+- package.json
+- vite configuration
+- src/
+- components
+- services
+- data/mock files
+- API code
+- state management
+- CSS
+- environment configuration
+- routing if present
+- configuration files
+- build configuration
+
+Also inspect the actual rendered application if possible.
+
+============================================================
+1. CURRENT ARCHITECTURE
+============================================================
+
+Tell me exactly:
+
+- framework
+- build tool
+- language
+- component structure
+- state architecture
+- API architecture
+- mock architecture
+- styling architecture
+- dependency choices
+- how frontend state flows through the application
+
+Show me the actual architecture based on the code.
+
+Do NOT describe what the application SHOULD have.
+
+Describe what it CURRENTLY has.
+
+============================================================
+2. FUNCTIONAL COMPLETENESS
+============================================================
+
+Check whether these actually work:
+
+[ ] Claim input
+[ ] Empty claim handling
+[ ] Verify button
+[ ] Loading state
+[ ] Loading transitions
+[ ] API request
+[ ] API response handling
+[ ] Verdict rendering
+[ ] Confidence rendering
+[ ] Explanation rendering
+[ ] Evidence rendering
+[ ] Multiple evidence items
+[ ] Missing evidence
+[ ] Debate rendering
+[ ] Debate collapse/expand
+[ ] Reset / verify another claim
+[ ] Error state
+[ ] Network failure handling
+[ ] Backend failure handling
+
+For every item report:
+
+IMPLEMENTED
+PARTIALLY IMPLEMENTED
+NOT IMPLEMENTED
+BROKEN
+
+And give the exact reason.
+
+============================================================
+3. BACKEND COMPATIBILITY
+============================================================
+
+This is extremely important.
+
+Compare the CURRENT FRONTEND CODE against the ACTUAL backend contract above.
+
+Check:
+
+- endpoint
+- HTTP method
+- request body
+- response parsing
+- verdict mapping
+- confidence
+- explanation
+- evidence structure
+- evidence score
+- debate structure
+- final_reasoning object
+- optional source
+- optional URL
+- error responses
+
+Identify EVERY incompatibility.
+
+For example:
+
+If frontend expects:
+
+final_reasoning: string
+
+but backend sends:
+
+final_reasoning: {
+  round,
+  agent_1,
+  agent_2
+}
+
+mark it as a backend integration issue.
+
+Do not assume the frontend will magically handle it.
+
+============================================================
+4. MOCK VS REAL IMPLEMENTATION
+============================================================
+
+Determine whether the current frontend is:
+
+A. REAL BACKEND READY
+B. MOCK ONLY
+C. PARTIALLY BACKEND READY
+D. VISUAL DEMO ONLY
+
+Choose the accurate classification based on the actual code.
+
+Explain exactly why.
+
+Check whether replacing:
+
+mockVerifyClaim()
+
+with:
+
+POST /api/verify
+
+would work cleanly.
+
+If not, identify every required change.
+
+============================================================
+5. API ARCHITECTURE
+============================================================
+
+Determine whether the frontend has a clean API abstraction.
+
+Ideally:
+
+UI
+↓
+API service
+↓
+POST /api/verify
+↓
+normalization
+↓
+UI model
+
+Check whether fetch/API logic is:
+
+- centralized
+- duplicated
+- inside components
+- mixed with presentation logic
+- tightly coupled to backend response format
+
+Tell me whether the current architecture is suitable for production integration.
+
+============================================================
+6. DATA NORMALIZATION
+============================================================
+
+Check whether backend-specific values are normalized.
+
+Especially:
+
+SUPPORTS
+REFUTES
+NOT ENOUGH INFO
+
+into:
+
+SUPPORTED
+REFUTED
+UNCERTAIN
+
+Also check whether evidence and debate responses are normalized before reaching UI components.
+
+If normalization does not exist, identify the risk.
+
+============================================================
+7. ERROR HANDLING
+============================================================
+
+Check actual code for:
+
+400
+422
+500
+network errors
+timeouts
+malformed responses
+empty responses
+
+Determine whether the UI handles them gracefully.
+
+No generic:
+
+alert()
+
+No raw stack traces.
+
+No broken blank screens.
+
+============================================================
+8. PRODUCTION CODE QUALITY
+============================================================
+
+Audit for:
+
+- duplicated code
+- dead code
+- unused imports
+- hardcoded data
+- hardcoded verdicts
+- hardcoded confidence
+- fake evidence
+- fake source URLs
+- fragile assumptions
+- unnecessary dependencies
+- excessive component complexity
+- giant components
+- unnecessary abstractions
+- poor naming
+- missing keys
+- unsafe rendering
+- console errors
+- console warnings
+- missing error boundaries where appropriate
+- brittle state handling
+
+Do not invent problems.
+
+Only report problems actually found.
+
+============================================================
+9. UI / UX QUALITY
+============================================================
+
+Inspect the actual implementation.
+
+Assess:
+
+- typography
+- spacing
+- hierarchy
+- alignment
+- claim input
+- button
+- loading
+- result
+- verdict
+- confidence
+- explanation
+- evidence
+- debate
+- error states
+- empty states
+- responsive behavior
+- accessibility
+- focus states
+- hover states
+- disabled states
+
+Do NOT give me generic design advice.
+
+Tell me specifically what is currently weak or strong in THIS implementation.
+
+============================================================
+10. RESPONSIVENESS
+============================================================
+
+Test or inspect:
+
+320px
+375px
+768px
+1024px
+1280px
+1440px
+
+Check:
+
+- overflow
+- clipped text
+- broken cards
+- excessive whitespace
+- cramped layouts
+- button sizing
+- textarea sizing
+- evidence wrapping
+- debate wrapping
+
+Report actual issues.
+
+============================================================
+11. ACCESSIBILITY
+============================================================
+
+Inspect actual code for:
+
+- semantic HTML
+- labels
+- keyboard interaction
+- focus states
+- button semantics
+- heading hierarchy
+- contrast
+- ARIA usage
+- form accessibility
+- reduced motion considerations
+
+Classify:
+
+GOOD
+PARTIAL
+POOR
+
+with concrete findings.
+
+============================================================
+12. BUILD / RUNTIME VERIFICATION
+============================================================
+
+DO NOT modify files.
+
+Run the existing project as-is.
+
+Run:
+
+npm install
+
+if required.
+
+Then:
+
+npm run build
+
+Also run the development server if possible.
+
+Check for:
+
+- build errors
+- TypeScript errors if applicable
+- ESLint errors
+- warnings
+- runtime errors
+- console errors
+- broken imports
+- missing dependencies
+
+Do not fix them.
+
+Only report them.
+
+============================================================
+13. PRODUCTION READINESS
+============================================================
+
+Give THREE separate assessments.
+
+A. VISUAL / UX READINESS
+
+Is the UI genuinely production quality?
+
+B. ENGINEERING READINESS
+
+Is the frontend code structured well enough for a real product?
+
+C. BACKEND INTEGRATION READINESS
+
+Can this frontend connect to the existing backend cleanly?
+
+Do NOT give one vague score.
+
+============================================================
+14. CLASSIFICATION
+============================================================
+
+Classify the current implementation as exactly one:
+
+DEMO ONLY
+
+DEMO + PARTIAL PRODUCTION STRUCTURE
+
+BACKEND-INTEGRATION READY
+
+PRODUCTION READY
+
+Choose based ONLY on evidence from the actual code.
+
+Do not be generous.
+
+Do not be harsh for the sake of being harsh.
+
+Be technically accurate.
+
+============================================================
+15. REQUIRED FINAL REPORT
+============================================================
+
+Return the report in this exact structure:
+
+# VERDICT FRONTEND CODE AUDIT
+
+## 1. Current Implementation
+What actually exists.
+
+## 2. Architecture
+Actual architecture.
+
+## 3. Functional Status
+Table:
+
+| Feature | Status | Evidence / Issue |
+|---|---|---|
+
+## 4. Backend Compatibility
+Every mismatch between frontend and backend.
+
+## 5. Mock vs Real Backend
+Exact current situation.
+
+## 6. API Architecture
+Assessment.
+
+## 7. Data Normalization
+Assessment.
+
+## 8. Error Handling
+Assessment.
+
+## 9. Code Quality
+Actual issues.
+
+## 10. UI/UX
+Actual issues.
+
+## 11. Responsive Behavior
+Actual issues.
+
+## 12. Accessibility
+Actual issues.
+
+## 13. Build / Runtime
+Actual results.
+
+## 14. Production Readiness
+
+### Visual / UX:
+...
+
+### Engineering:
+...
+
+### Backend Integration:
+...
+
+## 15. Final Classification
+
+Choose exactly one:
+
+DEMO ONLY
+DEMO + PARTIAL PRODUCTION STRUCTURE
+BACKEND-INTEGRATION READY
+PRODUCTION READY
+
+## 16. Blocking Issues
+
+List ONLY issues that genuinely prevent backend integration or production readiness.
+
+Separate:
+
+CRITICAL
+HIGH
+MEDIUM
+LOW
+
+## 17. Exact Required Changes
+
+Give the minimum concrete changes required.
+
+Do NOT implement them.
+
+============================================================
+IMPORTANT
+============================================================
+
+DO NOT modify ANY file.
+
+DO NOT redesign anything.
+
+DO NOT refactor anything.
+
+DO NOT create an artifact.
+
+DO NOT create a new frontend.
+
+DO NOT invent missing functionality.
+
+DO NOT tell me what you would build.
+
+AUDIT THE CODE THAT EXISTS RIGHT NOW.
+
+I want an honest engineering audit of the CURRENT implementation.
+
+The purpose of this audit is to determine:
+
+"Is this exact frontend actually ready to connect to the existing backend, or is it still just a demo?"
+
+Nothing else.
