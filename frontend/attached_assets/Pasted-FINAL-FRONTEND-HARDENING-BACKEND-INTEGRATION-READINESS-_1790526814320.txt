@@ -1,0 +1,767 @@
+FINAL FRONTEND HARDENING + BACKEND-INTEGRATION READINESS TASK
+
+You have already completed a full audit of the current VERDICT frontend.
+
+DO NOT rebuild the frontend.
+
+DO NOT redesign it from scratch.
+
+DO NOT create a new project.
+
+DO NOT replace the existing implementation.
+
+Now take the CURRENT frontend code and make the necessary changes so it is completely ready to connect to the real VERDICT backend.
+
+The goal is:
+
+CURRENT FRONTEND
+→ HARDENED PRODUCTION FRONTEND
+→ READY FOR REAL BACKEND
+→ NO MOCK-ONLY ASSUMPTIONS
+→ CLEAN API INTEGRATION
+
+============================================================
+1. FIRST: PRESERVE THE CURRENT PRODUCT
+============================================================
+
+Keep the existing:
+
+- visual identity
+- typography
+- layout
+- component structure
+- claim input
+- result experience
+- verdict presentation
+- evidence presentation
+- debate presentation
+- responsive behavior
+- loading experience
+- error experience
+
+Do NOT redesign the application unnecessarily.
+
+Only change things that are required for correctness, production readiness, backend integration, accessibility, or obvious unfinished details.
+
+The existing UI is already substantially complete.
+
+Improve it surgically.
+
+============================================================
+2. FIX BACKEND INTEGRATION ARCHITECTURE
+============================================================
+
+The frontend must use:
+
+POST /api/verify
+
+Request:
+
+{
+  "claim": "..."
+}
+
+Keep all API communication centralized in:
+
+src/services/api.ts
+
+Do NOT put fetch() calls inside React components.
+
+The final architecture must remain:
+
+UI
+↓
+verifyClaim()
+↓
+API service
+↓
+POST /api/verify
+↓
+response normalization
+↓
+frontend-owned data model
+↓
+UI
+
+============================================================
+3. KEEP MOCK MODE BUT MAKE IT CLEAN
+============================================================
+
+Mock mode may remain for local UI development.
+
+Keep:
+
+VITE_VERDICT_MOCK
+
+But make the behavior explicit.
+
+Development may use:
+
+VITE_VERDICT_MOCK=true
+
+Backend integration must use:
+
+VITE_VERDICT_MOCK=false
+
+Do NOT allow the application to accidentally appear to be connected to a real verification backend while silently using mock data.
+
+When mock mode is active, the UI may clearly identify that it is using mock data.
+
+When real mode is active, it must use the real API.
+
+============================================================
+4. STRICT RESPONSE VALIDATION
+============================================================
+
+This is mandatory.
+
+Do NOT silently convert invalid backend data into a plausible result.
+
+Backend verdict values:
+
+SUPPORTS
+REFUTES
+NOT ENOUGH INFO
+
+Frontend values:
+
+SUPPORTED
+REFUTED
+UNCERTAIN
+
+Mapping:
+
+SUPPORTS → SUPPORTED
+REFUTES → REFUTED
+NOT ENOUGH INFO → UNCERTAIN
+
+If the backend returns an unknown verdict:
+
+DO NOT convert it to UNCERTAIN.
+
+Throw a structured API/validation error.
+
+Example:
+
+Invalid verification response.
+
+The UI should then show the normal error state.
+
+============================================================
+5. VALIDATE THE RESPONSE STRUCTURE
+============================================================
+
+Before passing backend data to React components, validate the response.
+
+Required:
+
+claim
+verdict
+confidence
+explanation
+evidence
+debate
+
+Validate:
+
+claim → string
+verdict → known enum
+confidence → finite number between 0 and 1
+explanation → string
+evidence → array
+debate → object
+
+Evidence items:
+
+title → string when provided
+sentence_id → string/number when provided
+text → string
+score → number when provided
+source → optional string
+url → optional string
+
+Debate:
+
+agents → number
+rounds → number
+final_reasoning → object
+
+final_reasoning:
+
+round → number
+agent_1 → string
+agent_2 → string
+
+Do not allow malformed data to silently reach the UI.
+
+You may use a lightweight validation approach.
+
+Do not introduce a huge validation framework just for this.
+
+============================================================
+6. SAFE URL HANDLING
+============================================================
+
+Evidence URLs are optional.
+
+If URL does not exist:
+
+Do not render "Open source".
+
+If URL exists:
+
+Only allow safe web protocols such as:
+
+https:
+http:
+
+Do not render arbitrary protocols.
+
+Do not invent URLs.
+
+Do not construct URLs.
+
+Do not guess source names.
+
+The backend is the source of truth.
+
+============================================================
+7. EVIDENCE SCORE
+============================================================
+
+The backend's:
+
+score
+
+is retrieval relevance/similarity.
+
+It is NOT:
+
+confidence
+truth probability
+verdict certainty
+
+Keep the existing distinction.
+
+If displayed, label it clearly as:
+
+Retrieval relevance
+
+Never call it confidence.
+
+============================================================
+8. ERROR HANDLING
+============================================================
+
+Create clean structured handling for:
+
+400
+422
+500
+network failure
+timeout
+invalid response
+
+Do not display:
+
+stack traces
+raw backend responses
+technical debugging information
+
+Provide useful user-facing messages.
+
+Examples:
+
+400:
+Please enter a valid claim and try again.
+
+422:
+The verification request could not be processed.
+
+500:
+The verification service is temporarily unavailable. Please try again.
+
+Network:
+We could not reach the verification service. Check your connection and try again.
+
+Invalid backend response:
+The verification service returned an unexpected result. Please try again.
+
+Keep retry functionality.
+
+============================================================
+9. TIMEOUT
+============================================================
+
+Keep the existing AbortController timeout.
+
+15 seconds is acceptable.
+
+Make sure aborted requests do not create confusing duplicate error states.
+
+============================================================
+10. LOADING EXPERIENCE
+============================================================
+
+Do not pretend the frontend knows exact backend progress if the backend only returns one final response.
+
+The current conceptual stages can remain:
+
+Verifying claim
+Retrieving evidence
+Running AI debate
+Generating verdict
+
+But present them honestly.
+
+Do NOT create fake progress percentages.
+
+Do NOT claim that a specific backend stage has completed unless the backend actually provides that information.
+
+If the current UI makes the stages appear dynamically progressive without real information, either:
+
+A. make the presentation clearly conceptual
+
+OR
+
+B. use a simple verification-in-progress state.
+
+Prefer honesty over fake progress.
+
+============================================================
+11. FIX KEYBOARD INSTRUCTION
+============================================================
+
+The current textarea says:
+
+"Press Enter to submit"
+
+This is incorrect because Enter normally creates a new line.
+
+Fix this.
+
+Preferred behavior:
+
+Enter = newline
+
+Ctrl + Enter = submit
+Cmd + Enter = submit
+
+If implemented, update the helper text accordingly.
+
+Otherwise remove the keyboard instruction completely.
+
+Do not break normal multiline textarea behavior.
+
+============================================================
+12. ACCESSIBILITY HARDENING
+============================================================
+
+Keep the current accessibility foundation.
+
+Improve:
+
+- loading aria-busy
+- appropriate aria-live behavior
+- error focus where useful
+- success result heading structure
+- keyboard interaction
+- focus visibility
+- semantic structure
+
+The result screen should have a clear page-level heading.
+
+Do not overuse ARIA.
+
+Use native HTML semantics wherever possible.
+
+============================================================
+13. FIX PRODUCTION METADATA
+============================================================
+
+Remove all scaffold/Replit placeholder metadata.
+
+Especially:
+
+"VERDICT — built on Replit. Update this description to reflect the app."
+
+Replace with real production metadata.
+
+Title:
+
+VERDICT — Evidence-Based AI Claim Verification
+
+Description:
+
+Verify factual claims using AI reasoning and supporting evidence.
+
+Also update:
+
+- meta description
+- Open Graph title
+- Open Graph description
+- Twitter title
+- Twitter description
+
+Do not add fake social preview images.
+
+============================================================
+14. API CONFIGURATION
+============================================================
+
+Do not hard-code:
+
+http://127.0.0.1:8000
+
+inside React components.
+
+Frontend requests should remain:
+
+/api/verify
+
+Development proxy should route:
+
+/api
+→
+http://127.0.0.1:8000
+
+The frontend must therefore remain backend-location independent.
+
+Do not modify backend CORS.
+
+============================================================
+15. PREPARE FOR REAL BACKEND
+============================================================
+
+The frontend must be ready for the following actual response:
+
+{
+  "claim": "...",
+  "verdict": "REFUTES",
+  "confidence": 0.98,
+  "explanation": "...",
+  "evidence": [
+    {
+      "title": "Jupiter",
+      "sentence_id": "12",
+      "text": "Jupiter is the fifth planet from the Sun and the largest in the Solar System.",
+      "score": 0.8523
+    }
+  ],
+  "debate": {
+    "agents": 2,
+    "rounds": 3,
+    "final_reasoning": {
+      "round": 3,
+      "agent_1": "...",
+      "agent_2": "..."
+    }
+  }
+}
+
+The frontend must correctly render this exact structure.
+
+Do not require:
+
+source
+url
+
+because they are currently not supplied.
+
+============================================================
+16. TEST ALL THREE VERDICTS
+============================================================
+
+Verify that these backend responses render correctly:
+
+SUPPORTS
+
+REFUTES
+
+NOT ENOUGH INFO
+
+Expected UI:
+
+SUPPORTS → SUPPORTED
+
+REFUTES → REFUTED
+
+NOT ENOUGH INFO → UNCERTAIN
+
+All three must have:
+
+correct label
+correct styling
+correct icon
+correct explanation
+correct confidence
+correct evidence
+
+============================================================
+17. TEST EVIDENCE VARIATIONS
+============================================================
+
+Test:
+
+0 evidence items
+1 evidence item
+multiple evidence items
+
+Test evidence with:
+
+title
+text
+sentence_id
+score
+
+Test missing:
+
+source
+url
+
+The UI must remain clean.
+
+No fake metadata.
+
+No broken spacing.
+
+============================================================
+18. TEST DEBATE
+============================================================
+
+Test:
+
+2 agents
+3 rounds
+final_reasoning object
+
+Verify:
+
+Agent 1 reasoning
+Agent 2 reasoning
+round information
+
+The debate remains secondary to the verdict and evidence.
+
+============================================================
+19. TEST FAILURE CASES
+============================================================
+
+Test:
+
+empty claim
+400
+422
+500
+network failure
+timeout
+invalid JSON
+missing verdict
+unknown verdict
+invalid confidence
+missing explanation
+invalid evidence
+invalid debate
+
+Every invalid response must fail safely.
+
+Never manufacture a result.
+
+============================================================
+20. CLEAN DEPENDENCIES
+============================================================
+
+Inspect package.json.
+
+Do NOT blindly remove dependencies.
+
+Only remove clearly unused dependencies if you can verify they are not required by the existing application/scaffold.
+
+The current frontend uses:
+
+React
+React DOM
+Lucide React
+Wouter
+
+Do not introduce unnecessary libraries.
+
+For response validation, prefer a lightweight solution.
+
+============================================================
+21. BUILD + QUALITY
+============================================================
+
+After changes run:
+
+npm install
+
+npm run build
+
+Run the development server.
+
+Verify there are:
+
+NO build errors
+NO TypeScript errors
+NO runtime errors
+NO broken imports
+
+If a lint script exists:
+
+run it.
+
+If no lint script exists, do not create an unnecessarily complicated lint setup unless it is straightforward and safe.
+
+============================================================
+22. REAL API READINESS TEST
+============================================================
+
+If the backend is available in this environment:
+
+DO NOT modify it.
+
+Run the frontend against it.
+
+Set:
+
+VITE_VERDICT_MOCK=false
+
+Then test:
+
+POST /api/verify
+
+with a real claim.
+
+Verify the complete flow:
+
+Claim
+→ API request
+→ backend response
+→ normalization
+→ verdict
+→ confidence
+→ explanation
+→ evidence
+→ debate
+
+If the backend is NOT available:
+
+DO NOT fake this test.
+
+Instead verify that the frontend request is correctly prepared for:
+
+POST /api/verify
+
+and clearly report that live integration could not be tested.
+
+============================================================
+23. IMPORTANT BACKEND BOUNDARY
+============================================================
+
+DO NOT modify:
+
+backend/
+biography/
+gsm/
+math/
+mmlu/
+
+Do not fix backend problems yourself.
+
+If POST /api/verify is missing, report it.
+
+The frontend's job is to be ready for the backend.
+
+============================================================
+24. VISUAL QA AFTER FIXES
+============================================================
+
+After implementation, inspect the actual application.
+
+Check:
+
+- idle
+- loading
+- success
+- error
+- mobile
+- desktop
+- supported
+- refuted
+- uncertain
+- evidence
+- debate
+
+Do not redesign the application.
+
+Only correct issues introduced or identified by the audit.
+
+============================================================
+25. FINAL ACCEPTANCE CRITERIA
+============================================================
+
+Do not call the frontend "production ready" unless:
+
+[ ] Build passes
+[ ] TypeScript passes
+[ ] No runtime errors
+[ ] API service is centralized
+[ ] POST /api/verify is correctly implemented
+[ ] Request body is correct
+[ ] Verdict mapping is correct
+[ ] Response validation is strict
+[ ] Evidence is validated
+[ ] Debate is validated
+[ ] URLs are safely handled
+[ ] Errors are handled
+[ ] Timeout is handled
+[ ] Mock mode is separated
+[ ] Real mode is supported
+[ ] No fake backend data is used in real mode
+[ ] Metadata is production-ready
+[ ] Keyboard behavior is correct
+[ ] Accessibility issues are addressed
+[ ] Responsive behavior remains intact
+[ ] No backend/research files were modified
+
+============================================================
+26. FINAL REPORT
+============================================================
+
+After completing the work, report:
+
+1. Files changed
+2. What was fixed
+3. API architecture
+4. Backend contract compatibility
+5. Validation added
+6. Error handling
+7. Accessibility fixes
+8. Metadata fixes
+9. Build result
+10. Runtime result
+11. Whether live backend integration was tested
+12. Any remaining blocker
+
+Use this final classification:
+
+READY FOR BACKEND INTEGRATION
+
+or
+
+NOT READY FOR BACKEND INTEGRATION
+
+Do not say "production ready" if the backend itself is unavailable.
+
+IMPORTANT:
+
+DO THE WORK NOW.
+
+DO NOT JUST GIVE ME A PLAN.
+
+DO NOT REBUILD THE FRONTEND.
+
+DO NOT REDESIGN IT FROM SCRATCH.
+
+TAKE THE EXISTING CURRENT CODE, HARDEN IT, FIX THE AUDIT ISSUES, AND LEAVE IT READY TO CONNECT TO THE REAL BACKEND.

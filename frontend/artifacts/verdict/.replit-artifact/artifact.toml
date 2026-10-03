@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "VERDICT"
+description = "An evidence-based AI claim verification app that helps people submit claims, review a clear verdict, understand the reasoning, inspect supporting evidence, and explore a secondary AI debate view."
+version = "1.0.0"
+id = "artifacts/verdict"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 20591
+
+[services.development]
+run = "pnpm --filter @workspace/verdict run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/verdict", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/verdict/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20591"
+BASE_PATH = "/"
