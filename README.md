@@ -1,67 +1,45 @@
-# Improving Factuality and Reasoning in Language Models through Multiagent Debate
+# Verdict — Evidence-Based AI Claim Verification
 
-### [Project Page](https://composable-models.github.io/llm_debate/) | [Paper](https://arxiv.org/abs/2305.14325) 
+Verdict is an AI-powered claim verification platform that combines *evidence retrieval and multi-agent debate* to verify factual claims.
 
-[Yilun Du](https://yilundu.github.io/),
-[Shuang Li](https://shuangli59.github.io/),
-[Antonio Torralba](https://groups.csail.mit.edu/vision/torralbalab),
-[Joshua B. Tenenbaum](https://scholar.google.com/citations?user=rRJ9wTJMUB8C&hl=en),
-[Igor Mordatch](https://scholar.google.com/citations?user=Vzr1RukAAAAJ&hl=en)
+The project is based on *Yilun Du et al. — Improving Factuality and Reasoning in Language Models through Multiagent Debate (ICML 2024)*.
 
-This is a preliminary implementation of the paper "Improving Factuality and Reasoning in Language Models through Multiagent Debate". More tasks and settings will be released soon. 
-You may see some additional debate logs [here](https://www.dropbox.com/sh/6kq5ixfnf4zqk09/AABezsYsBhgg1IQAZ12yQ43_a?dl=0).
+## How It Works
 
-Also, check out gauss5930's awesome implementation of multiagent debate on opensource LLMs [here](https://github.com/gauss5930/LLM-Agora)!
+Claim → Evidence Retrieval → 2 AI Agents → 3 Debate Rounds → Judge → Final Verdict
 
-## Running experiments
+## Experiment Conditions
 
-The code for running arithmetic, GSM, biographies, and MMLU tasks may be found in the following subfolders
+- *Single LLM* — Direct claim verification
+- *Debate Only* — 2 agents with 3 debate rounds
+- *Evidence + Debate* — Retrieved evidence with multi-agent debate
 
-* ./math/ contains code for running math
-* ./gsm/ contains code for running gsm
-* ./biography/ contains code for running biographies
-* ./mmlu/ contains code for running mmlu results.
+## Results
 
-**Math:**
+### Verification Results — 50 FEVER Claims
 
-To generate and evaluated answer for Math problems through multiagent debate, cd into the math directory and run:
-	`python gen_math.py`
-	
-**Grade School Math:**
+| Method | Accuracy | Precision | Recall | F1-Score |
+|:--|--:|--:|--:|--:|
+| Single LLM | 60.0% | 42.3% | 58.8% | 48.6% |
+| Debate Only | 60.0% | 45.6% | 58.8% | 49.3% |
+| **Evidence + Debate** | **74.0%** | **80.6%** | **74.3%** | **73.2%** |
 
-To generate answers for Grade School Math problems through multiagent debate, cd into the gsm directory and run:
-	`python gen_gsm.py`
+### Evidence Retrieval Results
 
-To evaluate the generated results of Grade School Math problems:
-	`python eval_gsm.py`
-	
-You can download the GSM dataset [here](https://github.com/openai/grade-school-math)
+| Retrieval Method | Hit@1 | Hit@3 | Hit@5 |
+|:--|--:|--:|--:|
+| TF-IDF | 35.7% | 50.0% | 54.3% |
+| BM25 | 35.7% | 51.4% | **57.1%** |
+| **Sentence-BERT + FAISS** | **40.0%** | **52.9%** | 55.7% |
 
+## Tech Stack
 
-**Biography:**
+*Backend:* Python, FastAPI, Sentence Transformers, FAISS
 
-To generate answers for Biography problems through multiagent debate, cd into the biography directory and run:
-	`python gen_conversation.py`
+*Frontend:* React, TypeScript, Vite, Tailwind CSS
 
-To evaluate the generated results for Biography problems:
-	`python eval_conversation.py`
-	
-**MMLU:**
+*Dataset:* FEVER
 
-To generate answers for MMLU through multiagent debate, cd into the MMLU directory and run:
-	`python gen_mmlu.py`
+## Goal
 
-To evaluate the generated results of MMLU:
-	`python eval_mmlu.py`
-	
-You can download the MMLU dataset [here](https://github.com/hendrycks/test)
-
-If you would like to cite the paper, here is a bibtex file:
-```
-@article{du2023improving,
-  title={Improving Factuality and Reasoning in Language Models through Multiagent Debate},
-  author={Du, Yilun and Li, Shuang and Torralba, Antonio and Tenenbaum, Joshua B and Mordatch, Igor},
-  journal={arXiv preprint arXiv:2305.14325},
-  year={2023}
-}
-```
+To study whether combining *retrieved evidence with multi-agent debate* can improve the reliability and transparency of AI-based claim verification.
